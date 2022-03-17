@@ -12,7 +12,7 @@
             "program": "${workspaceFolder}/cmd/charon",
             "env": {},
             "args": [
-                "-apppath=/Users/max/Downloads/charon",
+                "-apppath=/Users/max/Projects/hercules/charon",
                 "-port=7979",
                 "-consulhost=http://consul-prod.kube.com"]
         },

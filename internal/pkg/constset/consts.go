@@ -15,9 +15,9 @@ var Nonce = []byte{9, 65, 48, 149, 170, 165, 84, 222, 74, 84, 4, 106}
 
 var (
 	// ConfWatchPrefix *string
-	Cacheminutes *int
-	Ingressgate  *bool
-	IngressHost  *string
+	// Cacheminutes *int
+	Ingressgate *bool
+	IngressHost *string
 )
 
 func StartupInit(bytes []byte) {
@@ -39,7 +39,7 @@ func init() {
 	// logsets.Appname  Appname = "charon"
 	*logsets.Appname = "charon"
 	Ingressgate = flag.Bool("ingressgate", false, "ingressgate or not")
-	Cacheminutes = flag.Int("cacheminutes", 5, "service cache for minutes")
+	// Cacheminutes = flag.Int("cacheminutes", 5, "service cache for minutes")
 	IngressHost = flag.String("ingresshost", "", "host pash for ingress gate")
 	// ConfWatchPrefix = flag.String("ConfWatchPrefix", "ops/", "watch prefix for consul")
 

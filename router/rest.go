@@ -16,6 +16,7 @@ import (
 	"github.com/max-gui/charon/internal/pkg/constset"
 	"github.com/max-gui/consulagent/pkg/consulhelp"
 	"github.com/max-gui/logagent/pkg/logagent"
+	"github.com/max-gui/logagent/pkg/logsets"
 	"github.com/max-gui/logagent/pkg/routerutil"
 
 	// "github.com/max-gui/charon/internal/pkg/logagent"
@@ -37,6 +38,7 @@ func SetupRouter() *gin.Engine {
 	// r.Any("/eurekaagent/apps/DEMO/192.168.226.203:demo:9898?status=UP&lastDirtyTimestamp=1631682844761
 	r.GET("/actuator/health", health)
 	r.Any("/proxy/:serviceid/:env/*path", call)
+	r.Any("/call/:from/:env/:serviceid/*path", sidecall)
 	r.Any("/eurekaagent/:appname/:env/*path", regagent.Eurekaagent)
 	r.Any("/consulagent/:appname/:env/*path", regagent.Consulagent)
 	// r.Any("/call/:serviceid/*path", consulagent)
@@ -226,22 +228,14 @@ func call(c *gin.Context) {
 	uri := c.Request.RequestURI
 	logger := logagent.Inst(c)
 	logger.Info(uri)
+
 	if strings.HasPrefix(uri, "/actuator/health") {
 		c.String(http.StatusOK, "online")
 	} else {
-
 		service := c.Param("serviceid")
 		env := c.Param("env")
-		logger.Info(service)
 		// body, _ := ioutil.ReadAll(c.Request.Body)
 		// fmt.Println("---body/--- \r\n " + string(body))
-
-		fmt.Println("---header/--- ")
-		headers := c.Request.Header
-		for k, v := range headers {
-			fmt.Println(k, v)
-		}
-		region := c.Value("region").(string)
 		// env := c.Value("env").(string)
 		// logger.Info(strings.Title("x-baggage-AF-region"))
 		// if val, ok := c.Request.Header[strings.Title(strings.ToLower("x-baggage-AF-region"))]; ok {
@@ -250,87 +244,287 @@ func call(c *gin.Context) {
 		// if val, ok := c.Request.Header[strings.Title(strings.ToLower("x-baggage-AF-env"))]; ok {
 		// 	env = val[0]
 		// }
-		logger.Infof("region:%s", region)
-		logger.Infof("env:%s", env)
-
-		euservices := ragcli.EurekaApplication{}
-
-		services := consulhelp.GetHealthService(service, c)
-
 		//should be open when closed sync
-		if len(services) == 0 {
-
-			euservices = ragcli.Eurekapp(service, c) //"fls-usedcar-trans-ms")
-
-		}
-
-		serviceinstance := acheron(env, region, services, euservices, c)
-
-		if len(serviceinstance) == 0 {
-			serviceinstance = acheron(env, "default", services, euservices, c)
-			if len(serviceinstance) == 0 {
-				serviceinstance = acheron("", "", services, euservices, c)
-				logger.WithField("fallback", "noregion").Info(service)
-			} else {
-				logger.WithField("fallback", "default").Info(service)
-			}
-		}
-		var index int
-		servicemap.help(func(kvs map[string]int) (bool, interface{}) {
-			if val, ok := kvs[service]; ok {
-				index = val + 1
-				kvs[service] = index
-			} else {
-				kvs[service] = 0
-			}
-
-			return true, 0
-		})
-		instanceindex := index % len(serviceinstance)
-		logger.Printf("index:%d", index)
-		logger.Printf("instanceindex:%d", instanceindex)
-		instance := serviceinstance[instanceindex]
-
-		logger.Printf("instance:%s", instance)
-
+		//"fls-usedcar-trans-ms")
 		// serip := "127.0.0.1"
 		// serport := "8080"
-
 		// serlocation := "http://" + serip + ":" + serport
-		var serlocation string
-		serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:7979", "")
-		if *constset.Ingressgate {
-			serlocation = *constset.IngressHost + strings.ToLower(service)
-			// serpath = "service/" + strings.ToLower(service) + serpath
-			serpath = strings.Split("service/"+strings.ToLower(service)+serpath, "?")[0]
-		} else {
-			serlocation = strings.TrimSuffix(instance.Url, "/")
-			serpath = strings.Split(serpath, "?")[0]
-		}
-
-		logger.Info(serlocation + serpath)
-
-		remote, err := url.Parse(serlocation)
-		if err != nil {
-			fmt.Println(err)
-		}
-		proxy := httputil.NewSingleHostReverseProxy(remote)
-		c.Request.Host = remote.Host
+		// serpath = "service/" + strings.ToLower(service) + serpath
 		// c.Request.RemoteAddr = "user:eureka@eureka.kube.com"
 		// c.Request.RequestURI = "/eureka" + strings.ReplaceAll(uri, "/eurekaagent", "")
 		// c.Request.URL.User = remote.User
-		c.Request.URL.Path = serpath //strings.Split(strings.ReplaceAll(uri, fixstr, ""), "?")[0]
+		//strings.Split(strings.ReplaceAll(uri, fixstr, ""), "?")[0]
+		// serpath //strings.Split(strings.ReplaceAll(uri, fixstr, ""), "?")[0]
 		// c.Request.URL.RawQuery = strings.ReplaceAll(c.Request.URL.RawQuery, "token=", "nekot=")
 		// auth := "user:eureka"
 		// basicAuth := "Bearer " + base64.StdEncoding.EncodeToString([]byte(*constset.Acltoken))
 		// c.Request.Header.Add("Authorization", basicAuth)
 		// if c.Request.Method == http.MethodPut {
-		logger.Print(c.Request)
 		// }
-		proxy.ServeHTTP(c.Writer, c.Request)
+		proxy2callee(service, env, uri, c)
+
 		// c.Redirect(http.StatusMovedPermanently, serlocation+serpath)
 	}
 }
+
+func sidecall(c *gin.Context) {
+	log.Print(*constset.Ingressgate)
+	uri := c.Request.RequestURI
+	logger := logagent.Inst(c)
+	logger.Info(uri)
+
+	service := c.Param("serviceid")
+	env := c.Param("env")
+	caller := c.Param("from")
+
+	flag := false
+	consulapps := ragcli.GetConsulapps(caller, env, service, c)
+	for _, app := range consulapps {
+		if app.Service.Service == service {
+			flag = true
+			break
+		}
+	}
+
+	if !flag {
+		logger.Print("not found")
+		c.String(http.StatusNotFound, "not found")
+		return
+	}
+
+	proxy2callee(service, env, uri, c)
+
+}
+
+func proxy2callee(service string, env string, uri string, c *gin.Context) {
+
+	logger := logagent.Inst(c)
+
+	logger.Info(service)
+
+	fmt.Println("---header/--- ")
+	headers := c.Request.Header
+	for k, v := range headers {
+		fmt.Println(k, v)
+	}
+	region := c.Value("region").(string)
+
+	logger.Infof("region:%s", region)
+	logger.Infof("env:%s", env)
+
+	euservices := ragcli.EurekaApplication{}
+
+	services := consulhelp.GetHealthService(service, c)
+
+	if len(services) == 0 {
+
+		euservices = ragcli.Eurekapp(service, c)
+
+	}
+
+	serviceinstance := acheron(env, region, services, euservices, c)
+
+	if len(serviceinstance) == 0 {
+		serviceinstance = acheron(env, "default", services, euservices, c)
+		if len(serviceinstance) == 0 {
+			serviceinstance = acheron("", "", services, euservices, c)
+			logger.WithField("fallback", "noregion").Info(service)
+		} else {
+			logger.WithField("fallback", "default").Info(service)
+		}
+	}
+
+	if len(serviceinstance) <= 0 {
+		c.String(http.StatusNotFound, "not found")
+		return
+	}
+	var index int
+	servicemap.help(func(kvs map[string]int) (bool, interface{}) {
+		if val, ok := kvs[service]; ok {
+			index = val + 1
+			kvs[service] = index
+		} else {
+			kvs[service] = 0
+		}
+
+		return true, 0
+	})
+	instanceindex := index % len(serviceinstance)
+	logger.Printf("index:%d", index)
+	logger.Printf("instanceindex:%d", instanceindex)
+	instance := serviceinstance[instanceindex]
+
+	logger.Printf("instance:%s", instance)
+
+	var serlocation string
+
+	serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
+	if *constset.Ingressgate {
+		serlocation = *constset.IngressHost + strings.ToLower(service)
+
+		serpath = strings.Split("service/"+strings.ToLower(service)+serpath, "?")[0]
+	} else {
+		serlocation = strings.TrimSuffix(instance.Url, "/")
+		serpath = strings.Split(serpath, "?")[0]
+	}
+
+	logger.Info(serlocation + serpath)
+
+	remote, err := url.Parse(serlocation)
+	if err != nil {
+		logger.Panic(err)
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(remote)
+	c.Request.Host = remote.Host
+
+	serpathdecoded, err := url.QueryUnescape(serpath)
+	if err != nil {
+		logger.Panic(err)
+	}
+	c.Request.URL.Path = serpathdecoded
+
+	logger.Print(c.Request)
+
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+// func sidecall(c *gin.Context) {
+// 	log.Print(*constset.Ingressgate)
+// 	uri := c.Request.RequestURI
+// 	logger := logagent.Inst(c)
+// 	logger.Info(uri)
+
+// 	service := c.Param("serviceid")
+// 	env := c.Param("env")
+// 	caller := c.Param("from")
+
+// 	flag := false
+// 	consulapps := ragcli.GetConsulapps(caller, env, service, c)
+// 	for _, app := range consulapps {
+// 		if app.Service.Service == service {
+// 			flag = true
+// 			break
+// 		}
+// 	}
+
+// 	if !flag {
+// 		logger.Print("not found")
+// 		c.String(http.StatusNotFound, "not found")
+// 		return
+// 	}
+
+// 	proxy2callee(service, env, uri, c)
+// 	logger.Info(service)
+// 	// body, _ := ioutil.ReadAll(c.Request.Body)
+// 	// fmt.Println("---body/--- \r\n " + string(body))
+
+// 	fmt.Println("---header/--- ")
+// 	headers := c.Request.Header
+// 	for k, v := range headers {
+// 		fmt.Println(k, v)
+// 	}
+// 	region := c.Value("region").(string)
+// 	// env := c.Value("env").(string)
+// 	// logger.Info(strings.Title("x-baggage-AF-region"))
+// 	// if val, ok := c.Request.Header[strings.Title(strings.ToLower("x-baggage-AF-region"))]; ok {
+// 	// 	region = val[0]
+// 	// }
+// 	// if val, ok := c.Request.Header[strings.Title(strings.ToLower("x-baggage-AF-env"))]; ok {
+// 	// 	env = val[0]
+// 	// }
+// 	logger.Infof("region:%s", region)
+// 	logger.Infof("env:%s", env)
+
+// 	euservices := ragcli.EurekaApplication{}
+
+// 	services := consulhelp.GetHealthService(service, c)
+
+// 	//should be open when closed sync
+// 	if len(services) == 0 {
+
+// 		euservices = ragcli.Eurekapp(service, c) //"fls-usedcar-trans-ms")
+
+// 	}
+
+// 	serviceinstance := acheron(env, region, services, euservices, c)
+
+// 	if len(serviceinstance) == 0 {
+// 		serviceinstance = acheron(env, "default", services, euservices, c)
+// 		if len(serviceinstance) == 0 {
+// 			serviceinstance = acheron("", "", services, euservices, c)
+// 			logger.WithField("fallback", "noregion").Info(service)
+// 		} else {
+// 			logger.WithField("fallback", "default").Info(service)
+// 		}
+// 	}
+
+// 	if len(serviceinstance) <= 0 {
+// 		c.String(http.StatusNotFound, "not found")
+// 		return
+// 	}
+// 	var index int
+// 	servicemap.help(func(kvs map[string]int) (bool, interface{}) {
+// 		if val, ok := kvs[service]; ok {
+// 			index = val + 1
+// 			kvs[service] = index
+// 		} else {
+// 			kvs[service] = 0
+// 		}
+
+// 		return true, 0
+// 	})
+// 	instanceindex := index % len(serviceinstance)
+// 	logger.Printf("index:%d", index)
+// 	logger.Printf("instanceindex:%d", instanceindex)
+// 	instance := serviceinstance[instanceindex]
+
+// 	logger.Printf("instance:%s", instance)
+
+// 	// serip := "127.0.0.1"
+// 	// serport := "8080"
+
+// 	// serlocation := "http://" + serip + ":" + serport
+// 	var serlocation string
+
+// 	serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
+// 	if *constset.Ingressgate {
+// 		serlocation = *constset.IngressHost + strings.ToLower(service)
+// 		// serpath = "service/" + strings.ToLower(service) + serpath
+// 		serpath = strings.Split("service/"+strings.ToLower(service)+serpath, "?")[0]
+// 	} else {
+// 		serlocation = strings.TrimSuffix(instance.Url, "/")
+// 		serpath = strings.Split(serpath, "?")[0]
+// 	}
+
+// 	logger.Info(serlocation + serpath)
+
+// 	remote, err := url.Parse(serlocation)
+// 	if err != nil {
+// 		logger.Panic(err)
+// 	}
+
+// 	proxy := httputil.NewSingleHostReverseProxy(remote)
+// 	c.Request.Host = remote.Host
+// 	// c.Request.RemoteAddr = "user:eureka@eureka.kube.com"
+// 	// c.Request.RequestURI = "/eureka" + strings.ReplaceAll(uri, "/eurekaagent", "")
+// 	// c.Request.URL.User = remote.User
+// 	serpathdecoded, err := url.QueryUnescape(serpath) //strings.Split(strings.ReplaceAll(uri, fixstr, ""), "?")[0]
+// 	if err != nil {
+// 		logger.Panic(err)
+// 	}
+// 	c.Request.URL.Path = serpathdecoded // serpath //strings.Split(strings.ReplaceAll(uri, fixstr, ""), "?")[0]
+// 	// c.Request.URL.RawQuery = strings.ReplaceAll(c.Request.URL.RawQuery, "token=", "nekot=")
+// 	// auth := "user:eureka"
+// 	// basicAuth := "Bearer " + base64.StdEncoding.EncodeToString([]byte(*constset.Acltoken))
+// 	// c.Request.Header.Add("Authorization", basicAuth)
+// 	// if c.Request.Method == http.MethodPut {
+// 	logger.Print(c.Request)
+// 	// }
+// 	proxy.ServeHTTP(c.Writer, c.Request)
+// 	// c.Redirect(http.StatusMovedPermanently, serlocation+serpath)
+
+// }
 
 type mutexKV struct {
 	sync.RWMutex

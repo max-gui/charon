@@ -19,10 +19,10 @@ func main() {
 	// router.Test(os.Args[1])
 	// var Argsetmap = make(map[string]interface{})
 
-	bytes := confload.Load()
+	c := logagent.GetRootContextWithTrace()
+	bytes := confload.Load(c)
 	constset.StartupInit(bytes)
 
-	c := logagent.GetRootContextWithTrace()
 	go consulhelp.StartWatch(*regagentsets.ConfWatchPrefix, true, c)
 	// config := consulhelp.Getconfaml(*constset.ConfResPrefix, "redis", "redis-sentinel-proxy", *constset.Appenv)
 	// redisops.Url = config["url"].(string)
