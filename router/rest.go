@@ -41,8 +41,38 @@ func SetupRouter() *gin.Engine {
 	r.Any("/call/:from/:env/:serviceid/*path", sidecall)
 	r.Any("/eurekaagent/:appname/:env/*path", regagent.Eurekaagent)
 	r.Any("/consulagent/:appname/:env/*path", regagent.Consulagent)
+	r.Any("/test", test)
+	r.Any("/mm", mm)
 	// r.Any("/call/:serviceid/*path", consulagent)
 	return r
+}
+
+func test(c *gin.Context) {
+	c.Writer.Header().Set("content-type", "application/vnd.ms-excel")
+	c.File("/Users/max/Downloads/dd")
+
+}
+
+func mm(c *gin.Context) {
+	logger := logagent.Inst(c)
+
+	remote, err := url.Parse("http://127.0.0.1:75979")
+	if err != nil {
+		logger.Panic(err)
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(remote)
+	c.Request.Host = remote.Host
+
+	c.Request.URL.Path = "testkk"
+
+	logger.Print(c.Request)
+
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		// logger.Panic(err)
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
+
 }
 
 // func LoggerWithConfig() gin.HandlerFunc {
@@ -217,7 +247,11 @@ func SetupRouter() *gin.Engine {
 // }
 
 type Serverlist struct {
-	Url string
+	Url    string
+	Dc     string
+	Env    string
+	Region string
+	Exturl string
 }
 
 func health(c *gin.Context) {
@@ -228,6 +262,8 @@ func call(c *gin.Context) {
 	uri := c.Request.RequestURI
 	logger := logagent.Inst(c)
 	logger.Info(uri)
+
+	region := c.Value("region").(string)
 
 	if strings.HasPrefix(uri, "/actuator/health") {
 		c.String(http.StatusOK, "online")
@@ -261,7 +297,7 @@ func call(c *gin.Context) {
 		// c.Request.Header.Add("Authorization", basicAuth)
 		// if c.Request.Method == http.MethodPut {
 		// }
-		proxy2callee(service, env, uri, c)
+		proxy2callee(service, env, region, uri, c)
 
 		// c.Redirect(http.StatusMovedPermanently, serlocation+serpath)
 	}
@@ -292,11 +328,12 @@ func sidecall(c *gin.Context) {
 		return
 	}
 
-	proxy2callee(service, env, uri, c)
+	region := c.Value("region").(string)
+	proxy2callee(service, env, region, uri, c)
 
 }
 
-func proxy2callee(service string, env string, uri string, c *gin.Context) {
+func proxy2callee(service, env, region string, uri string, c *gin.Context) {
 
 	logger := logagent.Inst(c)
 
@@ -307,10 +344,11 @@ func proxy2callee(service string, env string, uri string, c *gin.Context) {
 	for k, v := range headers {
 		fmt.Println(k, v)
 	}
-	region := c.Value("region").(string)
 
 	logger.Infof("region:%s", region)
 	logger.Infof("env:%s", env)
+	dc := *logsets.Appdc
+	logger.Infof("dc:%s", dc)
 
 	euservices := ragcli.EurekaApplication{}
 
@@ -322,19 +360,29 @@ func proxy2callee(service string, env string, uri string, c *gin.Context) {
 
 	}
 
-	serviceinstance := acheron(env, region, services, euservices, c)
+	// serviceinstance := acheron(env, region, services, euservices, c)
 
-	if len(serviceinstance) == 0 {
-		serviceinstance = acheron(env, "default", services, euservices, c)
-		if len(serviceinstance) == 0 {
-			serviceinstance = acheron("", "", services, euservices, c)
-			logger.WithField("fallback", "noregion").Info(service)
-		} else {
-			logger.WithField("fallback", "default").Info(service)
-		}
+	// if len(serviceinstance) == 0 {
+	// 	serviceinstance = acheron(env, "default", services, euservices, c)
+	// 	if len(serviceinstance) == 0 {
+	// 		serviceinstance = acheron("", "", services, euservices, c)
+	// 		logger.WithField("fallback", "noregion").Info(service)
+	// 	} else {
+	// 		logger.WithField("fallback", "default").Info(service)
+	// 	}
+	// }
+	Serverlist := getservices(dc, env, region, services, euservices, c)
+	serviceinstance := acheronfull(dc, env, region, Serverlist, c)
+
+	if len(serviceinstance) <= 0 {
+		logger.Printf("not found in %s", dc)
+		services = consulhelp.GetHealthServiceDc(service, c)
+		Serverlist = getservices(dc, env, region, services, euservices, c)
+		serviceinstance = acheronfull(dc, env, region, Serverlist, c)
 	}
 
 	if len(serviceinstance) <= 0 {
+		logger.Info("not found in all dcs")
 		c.String(http.StatusNotFound, "not found")
 		return
 	}
@@ -384,6 +432,9 @@ func proxy2callee(service string, env string, uri string, c *gin.Context) {
 	}
 	c.Request.URL.Path = serpathdecoded
 
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		logger.Panic(err)
+	}
 	logger.Print(c.Request)
 
 	proxy.ServeHTTP(c.Writer, c.Request)
@@ -540,6 +591,155 @@ func (v *mutexKV) help(tricky func(map[string]int) (bool, interface{})) (bool, i
 	return ok, res
 }
 
+func getservices(dc, env, region string, services []*api.ServiceEntry, euservices ragcli.EurekaApplication, c context.Context) map[string]map[string][]Serverlist {
+
+	logger := logagent.Inst(c)
+	// serviceinstance := []Serverlist{}
+	serviceInfos := map[string]map[string][]Serverlist{}
+	serviceInfos[dc] = map[string][]Serverlist{}
+	serviceInfos[dc][region] = []Serverlist{}
+	serviceInfos[dc]["default"] = []Serverlist{}
+	serviceInfos["others"] = map[string][]Serverlist{}
+	serviceInfos["others"][region] = []Serverlist{}
+	serviceInfos["others"]["default"] = []Serverlist{}
+
+	dctag := ""
+	dcurl := ""
+	serviceLen := 0
+	for _, entry := range services {
+		logger.Info(entry.Service)
+		if entryenv, ok := entry.Service.Meta["x-baggage-AF-env"]; ok {
+			if entryregion, ok := entry.Service.Meta["x-baggage-AF-region"]; ok {
+				if entrydc, ok := entry.Service.Meta["dc"]; ok {
+					// if entryextaddress, ok := entry.Service.Meta["extaddress"]; ok {
+					// 	if entryextport, ok := entry.Service.Meta["extport"]; ok {
+					entryextaddress, _ := entry.Service.Meta["extaddress"]
+					entryextport, _ := entry.Service.Meta["extport"]
+					if entrydc == "" {
+						entrydc = dc
+					}
+					if entryregion == "" {
+						entryregion = "default"
+					}
+					if entryenv == "" {
+						entryenv = env
+					}
+					if entryregion == region || entryregion == "default" && entryenv == env {
+
+						if entrydc != dc {
+							dctag = "others"
+							dcurl = "http://" + entryextaddress + ":" + entryextport
+						} else {
+							dctag = dc
+							dcurl = "http://" + entry.Service.Address + ":" + strconv.Itoa(entry.Service.Port)
+						}
+
+						serviceInfos[dctag][entryregion] = append(serviceInfos[dctag][entryregion],
+							Serverlist{
+								Url:    dcurl,
+								Env:    entryenv,
+								Dc:     entrydc,
+								Region: entryregion,
+								Exturl: "http://" + entry.Service.Address + ":" + strconv.Itoa(entry.Service.Port),
+							})
+						serviceLen++
+
+					}
+
+				}
+			}
+		}
+	}
+
+	if serviceLen <= 0 {
+		for _, instance := range euservices.Application.Instance {
+			logger.Info(instance)
+			entryenv, envok := instance.Metadata["x-baggage-AF-env"]
+			entryregion, regionok := instance.Metadata["x-baggage-AF-region"]
+
+			if entryregion == "" || !regionok {
+				entryregion = "default"
+			}
+			if entryenv == "" || !envok {
+				entryenv = env
+			}
+			if entryregion == region || entryregion == "default" && entryenv == env {
+
+				serviceInfos[dc][entryregion] = append(serviceInfos[dctag][entryregion],
+					Serverlist{
+						Url:    instance.HomePageUrl,
+						Env:    entryenv,
+						Dc:     dc,
+						Region: entryregion,
+						Exturl: instance.HomePageUrl,
+					})
+			}
+
+			// if envok && regionok && dcok || env == "" {
+			// 	serviceinstance = append(serviceinstance,
+			// 		Serverlist{Url: instance.HomePageUrl,
+			// 			Env:    entryenv,
+			// 			Dc:     entrydc,
+			// 			Region: entryregion,
+			// 		})
+			// }
+		}
+	}
+	return serviceInfos
+}
+
+func acheronfull(dc, env, region string, services map[string]map[string][]Serverlist, c context.Context) []Serverlist {
+
+	logger := logagent.Inst(c)
+	// var serviceinstance []Serverlist
+
+	f := func(indc, inregion string) []Serverlist {
+		if dcservices, ok := services[indc]; ok && len(dcservices) > 0 {
+			logger.Info(indc)
+			if regionserivces, ok := dcservices[inregion]; ok && len(regionserivces) > 0 {
+				logger.Info(inregion)
+				return regionserivces
+			} else if len(dcservices["default"]) > 0 {
+				logger.Info("default")
+				return dcservices["default"]
+			}
+		}
+		return nil
+	}
+
+	var serviceinstance = f(dc, region)
+	if len(serviceinstance) < 1 {
+		serviceinstance = f("others", region)
+	}
+
+	// if dcservices, ok := services[dc]; ok && len(dcservices) > 0 {
+	// 	logger.Info(dc)
+	// 	if regionserivces, ok := dcservices[region]; ok && len(regionserivces) > 0 {
+	// 		logger.Info(region)
+	// 		serviceinstance = regionserivces
+	// 	} else if len(dcservices["default"]) > 0 {
+	// 		logger.Info("default")
+	// 		serviceinstance = dcservices["default"]
+	// 	}
+	// }
+
+	// if len(serviceinstance) < 1 {
+	// 	if dcservices, ok := services["others"]; ok && len(dcservices) > 0 {
+	// 		logger.Info("others")
+	// 		if regionserivces, ok := dcservices[region]; ok && len(regionserivces) > 0 {
+	// 			logger.Info(region)
+	// 			serviceinstance = regionserivces
+	// 		} else if len(dcservices["default"]) > 0 {
+	// 			logger.Info("others default")
+	// 			serviceinstance = dcservices["default"]
+	// 		}
+	// 	}
+	// }
+
+	logger.Info(serviceinstance)
+	return serviceinstance
+}
+
 func acheron(env string, region string, services []*api.ServiceEntry, euservices ragcli.EurekaApplication, c context.Context) []Serverlist {
 
 	logger := logagent.Inst(c)
@@ -574,23 +774,3 @@ func acheron(env string, region string, services []*api.ServiceEntry, euservices
 	}
 	return serviceinstance
 }
-
-// func eurekaapp(servicename string, c context.Context) EurekaApplication {
-// 	logger := logagent.Inst(c)
-// 	resp := tocall("GET", *regagentsets.Eu_host+"/apps/"+servicename, map[string]string{"Accept": "application/json"}, c)
-// 	// resp := tocall("GET", "http://user:eureka@eureka.kube.com/eureka/apps/"+servicename, map[string]string{"Accept": "application/json"})
-// 	resbody, err := ioutil.ReadAll(resp.Body)
-// 	if err != nil {
-// 		log.Panic(err)
-// 	}
-// 	var resjson = EurekaApplication{}
-// 	err = json.Unmarshal(resbody, &resjson)
-// 	//logger.Info(resjson.Application.Instance[0].HomePageUrl)
-// 	//logger.Info(resjson.Application.Instance[0].IpAddr)
-// 	//logger.Info(resjson.Application.Instance[0].Metadata)
-// 	//logger.Info(resjson.Application.Instance[0].Port.Realport)
-// 	if err != nil {
-// 		logger.Print(err)
-// 	}
-// 	return resjson
-// }

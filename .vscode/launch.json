@@ -14,7 +14,7 @@
             "args": [
                 "-apppath=/Users/max/Projects/hercules/charon",
                 "-port=7979",
-                "-consulhost=http://consul-prod.kube.com"]
+                "-consulhost=http://consul-szf-prod.kube.com"]//consul-prod.kube.com"]
         },
         {
             "name": "Launch test function",

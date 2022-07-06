@@ -44,7 +44,7 @@ func init() {
 	// ConfWatchPrefix = flag.String("ConfWatchPrefix", "ops/", "watch prefix for consul")
 
 	// testing.Init()
-	flag.Parse()
+	// flag.Parse()
 
 }
 
