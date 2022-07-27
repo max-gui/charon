@@ -21,15 +21,41 @@ func init() {
 
 // 30.147.124.182 consul-szf-prod.kube.com
 // 245d0a09-7139-config-prod-ff170a0562b1
+
+func Test_sidecall(t *testing.T) {
+
+	var c = context.Background()
+	var service = "fls-aflm-nas-client"
+	var flag = false
+	consulapps := ragcli.GetConsulapps("fls-ls-commons", "test", service, c)
+	for _, app := range consulapps {
+		if app.Service.Service == service {
+			flag = true
+			break
+		}
+	}
+
+	if !flag {
+		log.Print("not found")
+
+	}
+}
+
 func Test_tconsuldc(t *testing.T) {
 
 	c := gin.Context{}
 	c.Request = &http.Request{}
-	c.Set("region", "")
-	proxy2callee("fls-aflm-nas-client", "test", "", "", &c)
+	var caller = "fls-ls-common"
+	var env = "test"
+	var dc = "LFB"
+	var region = "default"
+	var service = "fls-aflm-nas-client"
+	trimstr := "/call/" + caller + "/" + env + "/" + dc + "/" + service
+	proxy2callee(service, env, dc, region, "", trimstr, &c)
 }
 
 func Test_acheronfull(t *testing.T) {
+	c := context.Background()
 	services := map[string]map[string][]Serverlist{}
 	services["LFB"] = map[string][]Serverlist{}
 	services["others"] = map[string][]Serverlist{}
@@ -41,36 +67,36 @@ func Test_acheronfull(t *testing.T) {
 	services["others"]["a"] = []Serverlist{{Url: "othersa1"}, {Url: "othersa2"}}
 	services["others"]["default"] = []Serverlist{{Url: "othersdefault1"}, {Url: "othersdefault2"}}
 
-	reslist := acheronfull("LFB", "test", "default", services, context.Background())
+	reslist := acheronfull("LFB", "test", "default", services, c)
 	assert.Equal(t, services["LFB"]["default"], reslist, "LFB, test, default failed")
 
-	reslist = acheronfull("LFE", "test", "default", services, context.Background())
+	reslist = acheronfull("LFE", "test", "default", services, c)
 	assert.Equal(t, services["others"]["default"], reslist, "LFE, test, default failed")
 
-	reslist = acheronfull("LFB", "test", "", services, context.Background())
+	reslist = acheronfull("LFB", "test", "", services, c)
 	assert.Equal(t, services["LFB"]["default"], reslist, "LFB, test, EMPTY failed")
 
-	reslist = acheronfull("LFE", "test", "", services, context.Background())
+	reslist = acheronfull("LFE", "test", "", services, c)
 	assert.Equal(t, services["others"]["default"], reslist, "LFE, test, EMPTY failed")
 
-	reslist = acheronfull("LFB", "test", "a", services, context.Background())
+	reslist = acheronfull("LFB", "test", "a", services, c)
 	assert.Equal(t, services["LFB"]["a"], reslist, "LFB, test, a failed")
 
-	reslist = acheronfull("LFE", "test", "a", services, context.Background())
+	reslist = acheronfull("LFE", "test", "a", services, c)
 	assert.Equal(t, services["others"]["a"], reslist, "LFE, test, a failed")
 
-	reslist = acheronfull("AAA", "test", "a", services, context.Background())
+	reslist = acheronfull("AAA", "test", "a", services, c)
 	assert.Equal(t, services["others"]["a"], reslist, "AAA, test, a failed")
 
-	reslist = acheronfull("AAA", "test", "b", services, context.Background())
+	reslist = acheronfull("AAA", "test", "b", services, c)
 	assert.Equal(t, services["others"]["default"], reslist, "AAA, test, b failed")
 
 }
 
 func Test_consuldc(t *testing.T) {
-
-	m := consulhelp.GetHealthServiceDc("af-front-platform-admin-external", context.Background())
-	n := consulhelp.GetHealthService("af-front-platform-admin-external", context.Background())
+	c := context.Background()
+	m := consulhelp.GetHealthServiceDc("af-front-platform-admin-external", c)
+	n := consulhelp.GetHealthService("af-front-platform-admin-external", c)
 
 	log.Printf("%+v", m[0])
 	log.Printf("%+v", n[0])
