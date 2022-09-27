@@ -12,9 +12,10 @@
             "program": "${workspaceFolder}/cmd/charon",
             "env": {},
             "args": [
-                "-apppath=/Users/max/Projects/hercules/charon",
+                "-jsonlog=false",
+                "-apppath=/Users/jimmy/Projects/hercules/charon",
                 "-port=7979",
-                "-consulhost=http://consul-szf-prod.kube.com"]//consul-prod.kube.com"]
+                "-consulhost=http://consul-prod.paic.com.cn"]//consul-szf-prod.paic.com.cn"]//consul-prod.kube.com"]
         },
         {
             "name": "Launch test function",

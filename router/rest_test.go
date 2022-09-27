@@ -27,7 +27,7 @@ func Test_sidecall(t *testing.T) {
 	var c = context.Background()
 	var service = "fls-aflm-nas-client"
 	var flag = false
-	consulapps := ragcli.GetConsulapps("fls-ls-commons", "test", service, c)
+	consulapps := ragcli.GetConsulapps("fls-ls-commons", "test", service, true, c)
 	for _, app := range consulapps {
 		if app.Service.Service == service {
 			flag = true
@@ -51,7 +51,39 @@ func Test_tconsuldc(t *testing.T) {
 	var region = "default"
 	var service = "fls-aflm-nas-client"
 	trimstr := "/call/" + caller + "/" + env + "/" + dc + "/" + service
-	proxy2callee(service, env, dc, region, "", trimstr, &c)
+	proxy2callee(service, env, dc, region, "", trimstr, false, &c)
+}
+
+func Test_getservices(t *testing.T) {
+
+	c := context.Background()
+	dc := "LFB"
+	env := "prod"
+	region := "default"
+	conservices := []*api.ServiceEntry{{Service: &api.AgentService{
+
+		Meta:              map[string]string{"x-baggage-AF-env": env, "x-baggage-AF-region": region},
+		Port:              0,
+		Address:           "11111",
+		SocketPath:        "",
+		TaggedAddresses:   map[string]api.ServiceAddress{},
+		Weights:           api.AgentWeights{},
+		EnableTagOverride: false,
+		CreateIndex:       0,
+		ModifyIndex:       0,
+		ContentHash:       "",
+		Proxy:             &api.AgentServiceConnectProxyConfig{},
+		Connect:           &api.AgentServiceConnect{},
+		Namespace:         "",
+		Partition:         "",
+		Datacenter:        dc,
+	}}}
+	eurekaservices := ragcli.EurekaApplication{Application: ragcli.Eurekaappinfo{Name: "a", Instance: []ragcli.EurekaInstance{
+		{HomePageUrl: "bb"},
+		{HomePageUrl: "cc"},
+	}}}
+	res := getservices(dc, env, region, conservices, eurekaservices, c)
+	log.Print(res)
 }
 
 func Test_acheronfull(t *testing.T) {

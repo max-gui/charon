@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 
+	"github.com/gin-contrib/pprof"
 	"github.com/max-gui/charon/internal/pkg/constset"
 	"github.com/max-gui/charon/router"
 	"github.com/max-gui/consulagent/pkg/consulhelp"
@@ -45,6 +46,7 @@ func main() {
 	// githelp.UpdateAll()
 	r := router.SetupRouter()
 	p := ginprometheus.NewPrometheus("gin")
+	pprof.Register(r)
 	p.Use(r)
 
 	r.Run(":" + *logsets.Port)

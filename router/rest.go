@@ -2,14 +2,13 @@ package router
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hashicorp/consul/api"
@@ -26,8 +25,12 @@ import (
 )
 
 func SetupRouter() *gin.Engine {
+	// http.DefaultTransport.(*http.Transport).MaxIdleConns = 500
+	// http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 500
 	// gin.New()
-
+	if *logsets.Appenv == "prod" {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	r := gin.New()                      //.Default()
 	r.Use(routerutil.GinHeaderMiddle()) // ginHeaderMiddle())
 	r.Use(routerutil.GinLogger())       //LoggerWithConfig())
@@ -39,8 +42,13 @@ func SetupRouter() *gin.Engine {
 	r.GET("/actuator/health", health)
 	r.Any("/proxy/:serviceid/:env/*path", call)
 	r.Any("/call/:from/:env/:dc/:serviceid/*path", sidecall)
-	r.Any("/eurekaagent/:appname/:env/*path", regagent.Eurekaagent)
-	r.Any("/consulagent/:appname/:env/*path", regagent.Consulagent)
+	// r.Any("/hostcall/*path", sidecall)
+	r.Any("/hostcall/:from/:env/:dc/*path", sidecall)
+	r.Any("/agentcall/:from/:env/:dc/:serviceid/*path", sidecall)
+	r.Any("/eurekaagent/:appname/:env/*path", regagent.Eureka8500)
+	r.Any("/consulagent/:appname/:env/*path", regagent.Consulagent8500)
+	r.Any("/eureka/:appname/:env/*path", regagent.Eureka80)
+	r.Any("/consul/:appname/:env/*path", regagent.Consulagent80)
 	// r.Any("/call/:serviceid/*path", consulagent)
 	return r
 }
@@ -57,58 +65,96 @@ func health(c *gin.Context) {
 	c.String(http.StatusOK, "online")
 }
 func call(c *gin.Context) {
-	log.Print(*constset.Ingressgate)
+	// log.Print(*constset.Ingressgate)
 	uri := c.Request.RequestURI
-	logger := logagent.Inst(c)
+	logger := logagent.InstArch(c)
 	logger.Info(uri)
 
 	region := c.Value("region").(string)
 
-	if strings.HasPrefix(uri, "/actuator/health") {
-		c.String(http.StatusOK, "online")
-	} else {
-		service := c.Param("serviceid")
-		env := c.Param("env")
-		dc := *logsets.Appdc
+	// if strings.HasPrefix(uri, "/actuator/health") {
+	// 	c.String(http.StatusOK, "online")
+	// } else {
+	service := c.Param("serviceid")
+	env := c.Param("env")
+	dc := *logsets.Appdc
 
-		trimstr := "/proxy/" + service + "/" + env + "/:" + *logsets.Port
-		// serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
-		proxy2callee(service, env, dc, region, uri, trimstr, c)
-	}
+	trimstr := "/proxy/" + service + "/" + env + "/:" + *logsets.Port
+	// serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
+	proxy2callee(service, env, dc, region, uri, trimstr, false, c)
+	// }
 }
 
 func sidecall(c *gin.Context) {
-	log.Print(*constset.Ingressgate)
+	// log.Print(*constset.Ingressgate)
 	uri := c.Request.RequestURI
-	logger := logagent.Inst(c)
+	logger := logagent.InstArch(c)
 	logger.Info(uri)
 
 	service := c.Param("serviceid")
+	// service = strings.ToLower(service)
 	env := c.Param("env")
 	dc := c.Param("dc")
 	caller := c.Param("from")
-
-	flag := false
-	consulapps := ragcli.GetConsulapps(caller, env, service, c)
-	for _, app := range consulapps {
-		if app.Service.Service == service {
-			flag = true
-			break
-		}
+	logger.Info("hostname:" + c.Request.Host)
+	hostmode := false
+	if service == "" && strings.HasSuffix(c.Request.Host, ".afproxy") {
+		// %s.afproxy"
+		//agservice.Address = fmt.Sprintf("%s.%s.%s.%s.afproxy", appname, env, *logsets.Appdc, service)
+		infos := strings.TrimSuffix(c.Request.Host, ".afproxy")
+		// infos := strings.Split(c.Request.Host, ".")
+		service = infos
+		hostmode = true
+		// if len(infos) > 3 {
+		// 	// caller = infos[0]
+		// 	env = infos[0]
+		// 	dc = infos[1]
+		// 	service = infos[2]
+		// 	if caller == "" {
+		// 		ip := strings.Split(c.RemoteIP(), ":")[0]
+		// 		caller = consulhelp.GetAgentServices(ip, c)
+		// 	}
+		// } else {
+		// 	logger.Panic("hostname format is wrong")
+		// }
+		// strings.Split(infos, ".")
+	} else if service == "" {
+		logger.Panic("no from and no *.afproxy host and no serviceid para")
 	}
 
-	if !flag {
+	consulapps, isAllpath := ragcli.GetAproveServices(caller, c)
+	// service_lowcase := strings.ToLower(service)
+	if _, isApproved := consulapps[strings.ToLower(service)]; !isAllpath && !isApproved {
 		logger.Info("not found")
-		c.String(http.StatusNotFound, "not found")
+		c.String(http.StatusNotAcceptable, "service isnt in arch service list")
 		return
 	}
+	// flag := false
+
+	// for _, app := range consulapps {
+	// 	if app.Service.Service == service {
+	// 		flag = true
+	// 		break
+	// 	}
+	// }
+
+	// if !flag {
+	// 	logger.Info("not found")
+	// 	c.String(http.StatusNotFound, "not found")
+	// 	return
+	// }
 
 	region := c.Value("region").(string)
-
-	trimstr := "/call/" + caller + "/" + env + "/" + dc + "/" + service //:from/:env/:dc/:serviceid
-	// serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
-
-	proxy2callee(service, env, dc, region, uri, trimstr, c)
+	var trimstr string
+	if strings.HasPrefix(uri, "/agentcall") {
+		trimstr = "/agentcall/" + caller + "/" + env + "/" + dc + "/" + service //:from/:env/:dc/:serviceid
+		// serpath := strings.ReplaceAll(uri, "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
+	} else if strings.HasPrefix(uri, "/hostcall") {
+		trimstr = "/hostcall/" + caller + "/" + env + "/" + dc
+	} else {
+		trimstr = "/call/" + caller + "/" + env + "/" + dc + "/" + service
+	}
+	proxy2callee(service, env, dc, region, uri, trimstr, hostmode, c)
 
 }
 
@@ -130,17 +176,17 @@ func Das_Rheingold(service, env, dc, region string, eu_service ragcli.EurekaAppl
 
 	return serviceinstance, eu_service
 }
-func proxy2callee(service, env, dc, region, uri, trmstr string, c *gin.Context) {
+func proxy2callee(service, env, dc, region, uri, trmstr string, hostmode bool, c *gin.Context) {
 
-	logger := logagent.Inst(c)
+	logger := logagent.InstArch(c)
 
 	logger.Info(service)
 
-	fmt.Println("---header/--- ")
-	headers := c.Request.Header
-	for k, v := range headers {
-		fmt.Println(k, v)
-	}
+	// fmt.Println("---header/--- ")
+	// headers := c.Request.Header
+	// for k, v := range headers {
+	// 	fmt.Println(k, v)
+	// }
 
 	// if region == "" {
 	// 	region = "default"
@@ -179,7 +225,8 @@ func proxy2callee(service, env, dc, region, uri, trmstr string, c *gin.Context) 
 		// Serverlist = getservices(dc, env, region, services, euservices, c)
 		// serviceinstance = acheronfull(dc, env, region, Serverlist, c)
 	}
-
+	var instance Serverlist
+	// if len(serviceinstance) > 0 {
 	if len(serviceinstance) <= 0 {
 		logger.Info("not found in all dcs")
 		c.String(http.StatusNotFound, "not found")
@@ -199,45 +246,54 @@ func proxy2callee(service, env, dc, region, uri, trmstr string, c *gin.Context) 
 	instanceindex := index % len(serviceinstance)
 	logger.Printf("index:%d", index)
 	logger.Printf("instanceindex:%d", instanceindex)
-	instance := serviceinstance[instanceindex]
-
+	instance = serviceinstance[instanceindex]
+	// } else {
+	// 	instance = Serverlist{Url: "http://127.0.0.1:8080"}
+	// }
 	logger.Printf("instance:%s", instance)
-
-	var serlocation string
-
-	// serpath := strings.ReplaceAll(uri, trmstr "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
-	serpath := strings.ReplaceAll(uri, trmstr, "")
-	if *constset.Ingressgate {
-		serlocation = *constset.IngressHost + strings.ToLower(service)
-
-		serpath = strings.Split("service/"+strings.ToLower(service)+serpath, "?")[0]
+	if hostmode {
+		redirectUri := strings.ReplaceAll(c.Request.RequestURI, trmstr, strings.TrimSuffix(instance.Url, "/"))
+		logger.Info(redirectUri)
+		c.Redirect(301, redirectUri)
 	} else {
-		serlocation = strings.TrimSuffix(instance.Url, "/")
-		serpath = strings.Split(serpath, "?")[0]
+		var serlocation string
+
+		// serpath := strings.ReplaceAll(uri, trmstr "/proxy/"+service+"/"+env+"/:"+*logsets.Port, "")
+		serpath := strings.ReplaceAll(uri, trmstr, "")
+		if *constset.Ingressgate {
+			serlocation = *constset.IngressHost + strings.ToLower(service)
+
+			serpath = strings.Split("service/"+strings.ToLower(service)+serpath, "?")[0]
+		} else {
+			serlocation = strings.TrimSuffix(instance.Url, "/")
+			serpath = strings.Split(serpath, "?")[0]
+		}
+
+		logger.Info(serlocation + serpath)
+
+		remote, err := url.Parse(serlocation)
+		if err != nil {
+			logger.Panic(err)
+		}
+
+		proxy := httputil.NewSingleHostReverseProxy(remote)
+		c.Request.Host = remote.Host
+
+		serpathdecoded, err := url.QueryUnescape(serpath)
+		if err != nil {
+			logger.Panic(err)
+		}
+		c.Request.URL.Path = serpathdecoded
+
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			logger.Panic(err)
+		}
+		start := c.Value("starttime").(time.Time)
+		timestamp := time.Since(start).Milliseconds()
+		logger.WithField("LB_time_span", timestamp).Print(c.Request)
+
+		proxy.ServeHTTP(c.Writer, c.Request)
 	}
-
-	logger.Info(serlocation + serpath)
-
-	remote, err := url.Parse(serlocation)
-	if err != nil {
-		logger.Panic(err)
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(remote)
-	c.Request.Host = remote.Host
-
-	serpathdecoded, err := url.QueryUnescape(serpath)
-	if err != nil {
-		logger.Panic(err)
-	}
-	c.Request.URL.Path = serpathdecoded
-
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		logger.Panic(err)
-	}
-	logger.Print(c.Request)
-
-	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
 type mutexKV struct {
@@ -256,7 +312,7 @@ func (v *mutexKV) help(tricky func(map[string]int) (bool, interface{})) (bool, i
 
 func getservices(dc, env, region string, services []*api.ServiceEntry, euservices ragcli.EurekaApplication, c context.Context) map[string]map[string][]Serverlist {
 
-	logger := logagent.Inst(c)
+	logger := logagent.InstArch(c)
 	// serviceinstance := []Serverlist{}
 	serviceInfos := map[string]map[string][]Serverlist{}
 	serviceInfos[dc] = map[string][]Serverlist{}
@@ -273,43 +329,42 @@ func getservices(dc, env, region string, services []*api.ServiceEntry, euservice
 		logger.Info(consulhelp.ServiceEntryPrint(entry))
 		if entryenv, ok := entry.Service.Meta["x-baggage-AF-env"]; ok {
 			if entryregion, ok := entry.Service.Meta["x-baggage-AF-region"]; ok {
-				if entrydc, ok := entry.Service.Meta["dc"]; ok {
-					// if entryextaddress, ok := entry.Service.Meta["extaddress"]; ok {
-					// 	if entryextport, ok := entry.Service.Meta["extport"]; ok {
-					entryextaddress, _ := entry.Service.Meta["extaddress"]
-					entryextport, _ := entry.Service.Meta["extport"]
-					if entrydc == "" {
-						entrydc = dc
-					}
-					if entryregion == "" {
-						entryregion = "default"
-					}
-					if entryenv == "" {
-						entryenv = env
-					}
-					if (entryregion == region || entryregion == "default") && entryenv == env {
+				entrydc, ok := entry.Service.Meta["dc"]
+				// if entryextaddress, ok := entry.Service.Meta["extaddress"]; ok {
+				// 	if entryextport, ok := entry.Service.Meta["extport"]; ok {
+				entryextaddress := entry.Service.Meta["extaddress"]
+				entryextport := entry.Service.Meta["extport"]
+				if entrydc == "" || !ok {
+					entrydc = dc
+				}
+				if entryregion == "" {
+					entryregion = "default"
+				}
+				if entryenv == "" {
+					entryenv = env
+				}
+				if (entryregion == region || entryregion == "default") && entryenv == env {
 
-						if entrydc != dc {
-							dctag = "others"
-							dcurl = "http://" + entryextaddress + ":" + entryextport
-						} else {
-							dctag = dc
-							dcurl = "http://" + entry.Service.Address + ":" + strconv.Itoa(entry.Service.Port)
-						}
-
-						serviceInfos[dctag][entryregion] = append(serviceInfos[dctag][entryregion],
-							Serverlist{
-								Url:    dcurl,
-								Env:    entryenv,
-								Dc:     entrydc,
-								Region: entryregion,
-								Exturl: "http://" + entry.Service.Address + ":" + strconv.Itoa(entry.Service.Port),
-							})
-						serviceLen++
-
+					if entrydc != dc {
+						dctag = "others"
+						dcurl = "http://" + entryextaddress + ":" + entryextport
+					} else {
+						dctag = dc
+						dcurl = "http://" + entry.Service.Address + ":" + strconv.Itoa(entry.Service.Port)
 					}
+
+					serviceInfos[dctag][entryregion] = append(serviceInfos[dctag][entryregion],
+						Serverlist{
+							Url:    dcurl,
+							Env:    entryenv,
+							Dc:     entrydc,
+							Region: entryregion,
+							Exturl: "http://" + entry.Service.Address + ":" + strconv.Itoa(entry.Service.Port),
+						})
+					serviceLen++
 
 				}
+
 			}
 		}
 	}
@@ -329,7 +384,7 @@ func getservices(dc, env, region string, services []*api.ServiceEntry, euservice
 			}
 			if (entryregion == region || entryregion == "default") && entryenv == env {
 
-				serviceInfos[dc][entryregion] = append(serviceInfos[dctag][entryregion],
+				serviceInfos[dc][entryregion] = append(serviceInfos[dc][entryregion],
 					Serverlist{
 						Url:    instance.HomePageUrl,
 						Env:    entryenv,
@@ -356,7 +411,7 @@ func getservices(dc, env, region string, services []*api.ServiceEntry, euservice
 
 func acheronfull(dc, env, region string, services map[string]map[string][]Serverlist, c context.Context) []Serverlist {
 
-	logger := logagent.Inst(c)
+	logger := logagent.InstArch(c)
 	// var serviceinstance []Serverlist
 
 	f := func(indc, inregion string) []Serverlist {
@@ -384,7 +439,7 @@ func acheronfull(dc, env, region string, services map[string]map[string][]Server
 
 func acheron(env string, region string, services []*api.ServiceEntry, euservices ragcli.EurekaApplication, c context.Context) []Serverlist {
 
-	logger := logagent.Inst(c)
+	logger := logagent.InstArch(c)
 	serviceinstance := []Serverlist{}
 
 	for _, entry := range services {
