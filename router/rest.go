@@ -215,7 +215,7 @@ func proxy2callee(service, env, dc, region, uri, trmstr string, hostmode bool, c
 	// serviceinstance := acheronfull(dc, env, region, Serverlist, c)
 
 	serviceinstance, euservices := Das_Rheingold(service, env, dc, region, ragcli.EurekaApplication{}, consulhelp.GetHealthService, c)
-	if len(serviceinstance) <= 0 {
+	if len(serviceinstance) <= 0 && *logsets.Appdc != "DR" {
 		logger.Printf("not found in %s", dc)
 
 		serviceinstance, _ = Das_Rheingold(service, env, dc, region, euservices, consulhelp.GetHealthServiceDc, c)
