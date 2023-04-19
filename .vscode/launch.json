@@ -15,7 +15,7 @@
                 "-jsonlog=false",
                 "-apppath=/Users/jimmy/Projects/hercules/charon",
                 "-port=7979",
-                "-consulhost=http://consul-prod.paic.com.cn"]//consul-szf-prod.paic.com.cn"]//consul-prod.kube.com"]
+                "-consulhost=consul-prod.paic.com.cn"]//consul-szf-prod.paic.com.cn"]//consul-prod.paic.com.cn"]//http://consul-stg.paic.com.cn"
         },
         {
             "name": "Launch test function",

@@ -25,6 +25,7 @@ func main() {
 	constset.StartupInit(bytes)
 
 	go consulhelp.StartWatch(*regagentsets.ConfWatchPrefix, true, c)
+	go consulhelp.StartWatchEvent("srvdn", true, c)
 	// config := consulhelp.Getconfaml(*constset.ConfResPrefix, "redis", "redis-sentinel-proxy", *constset.Appenv)
 	// redisops.Url = config["url"].(string)
 	// redisops.Pwd = config["password"].(string)
