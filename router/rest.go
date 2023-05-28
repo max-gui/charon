@@ -344,10 +344,12 @@ func sidecall(c *gin.Context) {
 
 }
 
-func Das_Rheingold(service, env, dc, region string, eu_service ragcli.EurekaApplication, getConsulServices func(servicename string, c context.Context) []*api.ServiceEntry, c *gin.Context) ([]Serverlist, ragcli.EurekaApplication) {
+func Das_Rheingold(service, env, dc, region string,
+	eu_service ragcli.EurekaApplication, skipEureka bool,
+	getConsulServices func(servicename string, c context.Context) []*api.ServiceEntry, c *gin.Context) ([]Serverlist, ragcli.EurekaApplication) {
 	// m := func() []*api.ServiceEntry {
 	con_service := getConsulServices(service, c)
-	if len(con_service) == 0 && len(eu_service.Application.Instance) < 1 {
+	if !skipEureka && len(con_service) == 0 && len(eu_service.Application.Instance) < 1 {
 		eu_service, _ = ragcli.Eurekapp(service, c)
 
 	}
@@ -401,11 +403,11 @@ func proxy2callee(service, env, dc, region, uri, trmstr string, hostmode bool, c
 	// Serverlist := getservices(dc, env, region, services, euservices, c)
 	// serviceinstance := acheronfull(dc, env, region, Serverlist, c)
 
-	serviceinstance, euservices := Das_Rheingold(service, env, dc, region, ragcli.EurekaApplication{}, consulhelp.GetHealthService, c)
+	serviceinstance, euservices := Das_Rheingold(service, env, dc, region, ragcli.EurekaApplication{}, false, consulhelp.GetHealthService, c)
 	if len(serviceinstance) <= 0 && *logsets.Appdc != "DR" {
 		logger.Printf("not found in %s", dc)
 
-		serviceinstance, _ = Das_Rheingold(service, env, dc, region, euservices, consulhelp.GetHealthServiceDc, c)
+		serviceinstance, _ = Das_Rheingold(service, env, dc, region, euservices, true, consulhelp.GetHealthServiceDc, c)
 
 		// services, euservices = m(consulhelp.GetHealthServiceDc, ragcli.EurekaApplication{})
 		// // services = consulhelp.GetHealthServiceDc(service, c)
@@ -521,11 +523,11 @@ func proxy2calleeuri(service, env, dc, region, uri string, hostmode bool, c *gin
 	// Serverlist := getservices(dc, env, region, services, euservices, c)
 	// serviceinstance := acheronfull(dc, env, region, Serverlist, c)
 
-	serviceinstance, euservices := Das_Rheingold(service, env, dc, region, ragcli.EurekaApplication{}, consulhelp.GetHealthService, c)
+	serviceinstance, euservices := Das_Rheingold(service, env, dc, region, ragcli.EurekaApplication{}, false, consulhelp.GetHealthService, c)
 	if len(serviceinstance) <= 0 && *logsets.Appdc != "DR" {
 		logger.Printf("not found in %s", dc)
 
-		serviceinstance, _ = Das_Rheingold(service, env, dc, region, euservices, consulhelp.GetHealthServiceDc, c)
+		serviceinstance, _ = Das_Rheingold(service, env, dc, region, euservices, true, consulhelp.GetHealthServiceDc, c)
 
 		// services, euservices = m(consulhelp.GetHealthServiceDc, ragcli.EurekaApplication{})
 		// // services = consulhelp.GetHealthServiceDc(service, c)
